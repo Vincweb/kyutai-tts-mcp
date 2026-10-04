@@ -17,9 +17,21 @@ Two independent halves in one repo:
 **from PyPI, unpinned**. Consequence: editing `mcp/src/` changes nothing for
 an installed plugin until a new version is published. See *Releasing*.
 
-Almost all logic is in one file — [mcp/src/kyutai_tts_mcp/__main__.py](mcp/src/kyutai_tts_mcp/__main__.py),
-organised by `# ──` section markers. [extract.py](mcp/src/kyutai_tts_mcp/extract.py)
-backs the `extract-voice` CLI subcommand only.
+Three files under `mcp/src/kyutai_tts_mcp/`:
+
+- [__main__.py](mcp/src/kyutai_tts_mcp/__main__.py) — MCP tools, queues,
+  threads, audio output, CLI. Organised by `# ──` section markers.
+- [onnx_tts.py](mcp/src/kyutai_tts_mcp/onnx_tts.py) — the inference engine:
+  downloads a bundle, runs the three ONNX graphs, loads voices.
+- [text_chunking.py](mcp/src/kyutai_tts_mcp/text_chunking.py) — vendored
+  from pocket-tts 3.3.0 (MIT). Keep it a near-verbatim copy so upstream
+  fixes can be diffed in; the only change is the tokenizer type.
+
+There is **no PyTorch and no pocket-tts dependency** since 0.9.0. The
+models are the int8 ONNX bundles in
+[Vincweb/pocket-tts-french-onnx](https://huggingface.co/Vincweb/pocket-tts-french-onnx)
+and [-english-onnx](https://huggingface.co/Vincweb/pocket-tts-english-onnx),
+built for Volume Board (browser) and reused here.
 
 ## Testing — there is no test suite
 
@@ -39,21 +51,34 @@ real, write a throwaway client that spawns `uv run kyutai-tts-mcp` (cwd
   `audio_buffer` is 0, and check `last_error`. Then sleep ~2 s before
   closing stdin, or `atexit` aborts the PortAudio stream mid-tail.
 
-The first `speak()` in a language loads ~1.3 GB of model (~5–40 s cold) and
-plays sound on the machine you're running on. Say so before you do it.
+The first `speak()` in a language downloads ~115 MB of model, and every
+`speak()` plays sound on the machine you're running on. Say so before you do
+it. To test the pipeline silently, import the module and replace
+`sd.OutputStream` with a fake whose `write()` sleeps `len(chunk) / sr`.
 
 ## Hard constraints
 
 - **`mcp>=2.0.0`** — the SDK dropped `mcp.server.fastmcp` in 2.0; the class
   is `MCPServer` from `mcp.server.mcpserver`. `@mcp.tool()` and `mcp.run()`
   are unchanged. Never reintroduce a `FastMCP` import.
-- **`pocket-tts>=3.3`** — `generate_audio_stream(stop=)` arrived in 3.2,
-  Dutch in 3.3. Since 3.1, `export_model_state` is only importable from the
-  package root (`from pocket_tts import ...`), not from `models.tts_model`.
-- **`requires-python = ">=3.10,<3.14"`** — historical pocket-tts constraint.
-  pocket-tts 3.x allows `<3.15`, but 3.14 hasn't been verified here.
-- **`KYUTAI_TTS_DEVICE` stays `cpu`.** `mps` is unsupported by the
-  pocket-tts model on Apple Silicon; don't "optimise" this.
+- **Model repos are pinned** to a commit in `onnx_tts.BUNDLES`. They also
+  serve Volume Board, so following `main` would ship browser-motivated
+  changes to every uvx install. Bump the SHA deliberately, after testing.
+- **`BUNDLE_FORMAT = "volume-board/pocket-tts-onnx@1"`** and
+  `sampler_decode_steps == 1` are checked at load. The one-step LSD sampling
+  in `_generate_chunk` is only correct for 1 step.
+- **Voices** other than the bundled one come from
+  `kyutai/pocket-tts-without-voice-cloning` at the revision in the
+  manifest's `source.voice`. A voice state only fits the weights it was
+  computed with — never point it at another revision, and don't accept
+  arbitrary `.safetensors` paths (a 24-layer state loads silently and
+  sounds wrong).
+- **`onnxruntime>=1.20`, not higher.** 1.24+ ships macOS wheels for Apple
+  Silicon on macOS 14+ only; Intel Macs and macOS 13 resolve to 1.23.x.
+  The bundles are verified on 1.20.1 and 1.23.2.
+- **`requires-python = ">=3.11,<3.15"`** — onnxruntime wheel coverage.
+- **Unsupported languages raise `ToolError`**, not `ValueError`: mcp 2.x
+  replaces any other exception's text with a bare "Error executing tool".
 - **macOS / CoreAudio** via `sounddevice`. No Linux CI for the audio path.
 
 ## Threading invariants
@@ -69,16 +94,15 @@ gaps, deadlocks, or audio that won't stop:
   path shared by `stop_speaking()` and `speak(interrupt=True)` — set the
   event, drain both queues, `stream.abort()`. Keep it that way rather than
   adding a second abort path.
-- `_cancel_event` is also passed as `stop=` to `generate_audio_stream`, which
-  runs its own gen/decode threads. On cancel the generation loop keeps
-  *draining* the generator rather than `break`ing: it only ends once those
-  threads have exited, so the next request can't clear the event before
-  they've seen it.
+- `_cancel_event` is also passed as `stop` to `OnnxTTS.generate`, which
+  checks it before every 80 ms frame. Generation runs on the generation
+  thread itself (no helper threads), so `break`ing out leaves nothing
+  running.
 - Caches are guarded by their own locks (`_models_lock`, `_voice_states_lock`,
   `_stream_lock`). `_ensure_model` holds `_models_lock` across the heavy
   load on purpose — concurrent first-calls in the same language must not
   load twice.
-- All pocket-tts models share the mimi codec at 24 kHz, so **one**
+- Both bundles share the Mimi codec at 24 kHz, so **one**
   OutputStream serves every language. `_ensure_model` raises loudly if a
   language ever reports a different sample rate — don't soften that into a
   resample.

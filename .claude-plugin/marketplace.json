@@ -8,7 +8,7 @@
     {
       "name": "kyutai-tts",
       "source": "./plugin",
-      "description": "Local-only voice for Claude Code via Kyutai Pocket TTS (French + 6 langs, multi-language at runtime).",
+      "description": "Local-only voice for Claude Code via Kyutai Pocket TTS on ONNX Runtime (French + English, no PyTorch).",
       "version": "0.8.0"
     }
   ]

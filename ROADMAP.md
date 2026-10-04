@@ -58,7 +58,7 @@ there.
 
 ## 3. Docker image
 
-**Why**: easy headless / Linux use cases. Pocket-tts is CPU-only PyTorch, so
+**Why**: easy headless / Linux use cases. The server is CPU-only ONNX Runtime, so
 Docker works fine — Intel/AMD/ARM Linux all good. Useful for non-Mac users
 who want pocket-tts behind an MCP-compatible client.
 

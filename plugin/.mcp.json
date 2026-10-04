@@ -5,7 +5,7 @@
       "args": [
         "kyutai-tts-mcp",
         "--language",
-        "french_24l"
+        "french"
       ]
     }
   }

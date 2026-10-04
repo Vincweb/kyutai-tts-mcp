@@ -1,59 +1,59 @@
-"""MCP server wrapping Kyutai Pocket TTS via its native Python streaming API.
+"""MCP server wrapping Kyutai Pocket TTS, run through ONNX Runtime (no PyTorch).
 
 Pipeline:
 
   speak() request
-      └─► generation thread: tts_model.generate_audio_stream(...) yields
-          ~80 ms PCM chunks of torch.Tensor
-              └─► audio queue (numpy float32)
+      └─► generation thread: OnnxTTS.generate(...) yields 80 ms float32
+          PCM frames
+              └─► audio queue
                       └─► writer thread: stream.write(chunk) in blocking
                           write-mode sounddevice OutputStream
                               └─► CoreAudio
 
-Multi-language: each `speak()` can specify a `language` argument. Models
-are loaded lazily and cached per-language, so the first call to a new
-language pays ~3-5 s load time and ~1 GB resident RAM; subsequent calls
-in that language are instant. All pocket-tts models share the mimi codec
-at 24 kHz, so a single OutputStream serves every language.
+Two languages, French and English, each an int8 ONNX bundle of Kyutai's
+6-layer model (see onnx_tts.py). Each `speak()` can pass `language`;
+bundles load lazily and stay cached, so the first call in a language pays
+the ~120 MB download once, then well under a second to load. Both share
+the Mimi codec at 24 kHz, so a single OutputStream serves both.
 """
 import argparse
 import atexit
 import os
 import queue
 import threading
-from pathlib import Path
+from importlib.metadata import version
 from typing import Any
 
 import numpy as np
 import sounddevice as sd
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
-from .extract import run_extract_voice
+from .onnx_tts import BUNDLES, OnnxTTS, resolve_language
 
 
 # ── Config (environment variables) ────────────────────────────────────────────
 # Mutable: DEFAULT_LANGUAGE is overridden by main() after CLI parsing.
-# The CLI default itself falls back to KYUTAI_TTS_LANGUAGE env, then to "french_24l".
-DEFAULT_LANGUAGE = os.environ.get("KYUTAI_TTS_LANGUAGE", "french_24l")
+# The CLI default itself falls back to KYUTAI_TTS_LANGUAGE env, then to "french".
+DEFAULT_LANGUAGE = os.environ.get("KYUTAI_TTS_LANGUAGE", "french")
 DEFAULT_VOICE = os.environ.get("KYUTAI_TTS_VOICE")  # None → language default
-QUANTIZE = os.environ.get("KYUTAI_TTS_QUANTIZE", "0") == "1"
-DEVICE = os.environ.get("KYUTAI_TTS_DEVICE", "cpu")
-MAX_TOKENS = int(os.environ.get("KYUTAI_TTS_MAX_TOKENS", "50"))
+_max_tokens_env = os.environ.get("KYUTAI_TTS_MAX_TOKENS")
+MAX_TOKENS = int(_max_tokens_env) if _max_tokens_env else None  # None → bundle's own (50)
 
 
 # ── Server instance ───────────────────────────────────────────────────────────
-mcp = MCPServer("kyutai-tts")
+mcp = MCPServer("kyutai-tts", version=version("kyutai-tts-mcp"))
 
 
 # ── State: caches, queues, threads ────────────────────────────────────────────
 # Per-language model cache. Built lazily on first speak() in that language.
-_models: dict[str, Any] = {}
+_models: dict[str, OnnxTTS] = {}
 _models_lock = threading.Lock()
 _model_load_errors: dict[str, str] = {}
 _sample_rate: int | None = None  # set by the first loaded model; all share 24 kHz
 
 # Per-(language, voice) state cache. Voice state is tied to its model.
-_voice_states: dict[tuple[str, str], Any] = {}
+_voice_states: dict[tuple[str, str], dict[str, np.ndarray]] = {}
 _voice_states_lock = threading.Lock()
 
 # Audio queue: generation thread puts numpy chunks, writer thread calls
@@ -73,22 +73,20 @@ _last_error: str | None = None
 
 
 # ── Model & voice loading ─────────────────────────────────────────────────────
-def _ensure_model(language: str) -> Any:
+def _ensure_model(language: str) -> OnnxTTS:
     global _sample_rate
     with _models_lock:
         if language in _models:
             return _models[language]
         try:
-            from pocket_tts.models.tts_model import TTSModel  # heavy import
-            model = TTSModel.load_model(language=language, quantize=QUANTIZE)
-            model.to(DEVICE)
-            sr = int(model.config.mimi.sample_rate)
+            model = OnnxTTS(language)
+            sr = model.sample_rate
             if _sample_rate is None:
                 _sample_rate = sr
             elif sr != _sample_rate:
-                # Defensive — pocket-tts uses mimi 24 kHz everywhere today,
-                # but if this ever diverges, the single shared OutputStream
-                # would resample-by-skew. Surface the mismatch loudly.
+                # Defensive — every bundle uses Mimi at 24 kHz today, but if
+                # this ever diverges, the single shared OutputStream would
+                # resample-by-skew. Surface the mismatch loudly.
                 raise RuntimeError(
                     f"sample-rate mismatch: {language} reports {sr} Hz, "
                     f"stream is at {_sample_rate} Hz"
@@ -101,22 +99,16 @@ def _ensure_model(language: str) -> Any:
             raise
 
 
-def _resolve_voice(voice: str | None, language: str) -> str:
-    if voice:
-        return voice
-    if DEFAULT_VOICE:
-        return DEFAULT_VOICE
-    from pocket_tts.default_parameters import get_default_voice_for_language
-    return get_default_voice_for_language(language)
+def _resolve_voice(voice: str | None, model: OnnxTTS) -> str:
+    return voice or DEFAULT_VOICE or model.default_voice
 
 
-def _voice_state_for(voice: str, language: str) -> Any:
-    key = (language, voice)
+def _voice_state_for(voice: str, model: OnnxTTS) -> dict[str, np.ndarray]:
+    key = (model.language, voice)
     with _voice_states_lock:
         if key in _voice_states:
             return _voice_states[key]
-    model = _ensure_model(language)
-    state = model.get_state_for_audio_prompt(voice)
+    state = model.load_voice(voice)
     with _voice_states_lock:
         _voice_states[key] = state
     return state
@@ -175,20 +167,6 @@ def _ensure_writer() -> None:
 
 
 # ── Generation pipeline ───────────────────────────────────────────────────────
-def _chunk_to_float32(chunk: Any) -> np.ndarray:
-    # pocket-tts yields torch.Tensor on CPU. Defensive: support numpy too.
-    try:
-        import torch  # noqa: F401
-        if hasattr(chunk, "detach"):
-            chunk = chunk.detach().cpu().numpy()
-    except ImportError:
-        pass
-    arr = np.asarray(chunk).astype(np.float32, copy=False)
-    if arr.ndim > 1:
-        arr = arr.squeeze()
-    return arr
-
-
 def _generation_loop() -> None:
     global _last_error
     while True:
@@ -200,22 +178,14 @@ def _generation_loop() -> None:
         _gen_in_flight.set()
         try:
             model = _ensure_model(language)
-            voice = _resolve_voice(voice_arg, language)
-            voice_state = _voice_state_for(voice, language)
+            voice = _resolve_voice(voice_arg, model)
+            voice_state = _voice_state_for(voice, model)
             opened_stream = False
-            for chunk in model.generate_audio_stream(
-                model_state=voice_state,
-                text_to_generate=text,
-                max_tokens=MAX_TOKENS,
-                stop=_cancel_event,
-            ):
+            # The generator checks `stop` before every frame and runs on this
+            # thread, so breaking out leaves nothing running behind us.
+            for arr in model.generate(voice_state, text, stop=_cancel_event, max_tokens=MAX_TOKENS):
                 if _cancel_event.is_set():
-                    # Drain instead of break: pocket-tts's own gen/decode
-                    # threads exit on `stop`, and the generator only ends
-                    # once they have. Breaking early would let the next
-                    # request clear the event before they saw it.
-                    continue
-                arr = _chunk_to_float32(chunk)
+                    break
                 if arr.size == 0:
                     continue
                 if not opened_stream:
@@ -286,7 +256,7 @@ def speak(
     language: str | None = None,
     interrupt: bool = False,
 ) -> str:
-    """Speak text aloud through Kyutai Pocket TTS (local, streaming, ~200ms TTFA).
+    """Speak text aloud through Kyutai Pocket TTS (local, streaming, ~20 ms TTFA).
 
     Returns immediately. The text is queued for streaming generation in a
     background thread; chunks are pushed into a continuous sounddevice
@@ -304,25 +274,32 @@ def speak(
     Args:
         text: Text to read aloud. Match the language to the text — passing
               French text with `language="english"` will produce garbled output.
-        voice: Built-in voice name (e.g. "estelle", "alba", "giovanni",
-               "juergen", "lola", "rafael", "daan"), or a path to a wav file for
-               voice cloning, or a `hf://` URL. Defaults to the language's
-               built-in voice.
-        language: Pocket-tts model to use for this call. Options include
-                  "french_24l", "english", "english_2026-04",
-                  "spanish_24l", "german_24l", "italian_24l",
-                  "portuguese_24l", "dutch_24l". Defaults to the server's default
+        voice: Kyutai predefined voice name. Defaults to "estelle" in
+               French and "alba" in English. Others: "anna", "azelma",
+               "bill_boerst", "caro_davy", "charles", "cosette", "eponine",
+               "eve", "fantine", "george", "giovanni", "jane", "javert",
+               "jean", "juergen", "lola", "marius", "mary", "michael",
+               "paul", "peter_yearsley", "rafael", "stuart_bell", "vera".
+               Any voice works in either language; the first use of a
+               non-default voice downloads ~5 MB.
+        language: "french" or "english" (older names such as "french_24l"
+                  are accepted as aliases). Defaults to the server's default
                   language (set via the --language CLI flag, the
-                  KYUTAI_TTS_LANGUAGE env var, or "french_24l"). The
-                  model loads on first use of a given language (~3-5 s
-                  + ~1 GB RAM), then stays cached.
+                  KYUTAI_TTS_LANGUAGE env var, or "french"). The model
+                  downloads (~120 MB) on first use of a language, then
+                  stays cached.
         interrupt: If True, abort current playback and clear the queue
                    before enqueuing this text. Use when the user has
                    interrupted. Default False (queue normally).
     """
+    try:
+        lang = resolve_language(language or DEFAULT_LANGUAGE)
+    except ValueError as e:
+        # ToolError keeps its message; any other exception reaches the
+        # client as a bare "Error executing tool speak".
+        raise ToolError(str(e)) from None
     if interrupt:
         _abort_all()
-    lang = language or DEFAULT_LANGUAGE
     _ensure_gen_thread()
     _gen_q.put((text, voice, lang))
     return (
@@ -364,6 +341,7 @@ def status() -> dict:
         cached_voices = sorted(f"{lang}:{v}" for lang, v in _voice_states)
     return {
         "default_language": DEFAULT_LANGUAGE,
+        "supported_languages": list(BUNDLES),
         "loaded_languages": loaded,
         "model_load_errors": errors,
         "sample_rate": _sample_rate,
@@ -381,66 +359,23 @@ def main() -> None:
     global DEFAULT_LANGUAGE
     parser = argparse.ArgumentParser(
         prog="kyutai-tts-mcp",
-        description="MCP server wrapping Kyutai Pocket TTS (multi-language, streaming).",
+        description="MCP server wrapping Kyutai Pocket TTS (French + English, ONNX, streaming).",
     )
     parser.add_argument(
         "--language",
         default=DEFAULT_LANGUAGE,
         help=(
             "Default language used when speak() is called without an explicit "
-            "language= arg. Per-call language= always wins. "
-            "Falls back to KYUTAI_TTS_LANGUAGE env, then to 'french_24l'. "
+            "language= arg: 'french' or 'english'. Per-call language= always wins. "
+            "Falls back to KYUTAI_TTS_LANGUAGE env, then to 'french'. "
             f"(current default: {DEFAULT_LANGUAGE})"
         ),
     )
-
-    subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
-
-    extract = subparsers.add_parser(
-        "extract-voice",
-        help="Encode an audio sample into a .safetensors voice state",
-        description=(
-            "Pre-extract a voice state from an audio sample, save to a "
-            ".safetensors file. The output can be passed back to "
-            "speak(voice=...) for instant voice loading. Requires the "
-            "cloning-enabled checkpoint (accept terms at "
-            "https://huggingface.co/kyutai/pocket-tts + hf auth login)."
-        ),
-    )
-    extract.add_argument(
-        "--audio", "-i", required=True,
-        help="Source audio: local path, hf:// URL, or https:// URL. "
-             "Any format pocket-tts can decode (wav, mp3, flac, ...).",
-    )
-    extract.add_argument(
-        "--out", "-o", required=True,
-        help="Destination .safetensors path",
-    )
-    extract.add_argument(
-        "--language", default=DEFAULT_LANGUAGE,
-        help="Pocket-tts language model to use for encoding "
-             f"(default: {DEFAULT_LANGUAGE})",
-    )
-    extract.add_argument(
-        "--truncate", action="store_true",
-        help="Truncate the audio to 30 s before encoding "
-             "(recommended for long inputs to avoid memory pressure)",
-    )
-
     args = parser.parse_args()
-
-    if args.command == "extract-voice":
-        run_extract_voice(
-            audio=args.audio,
-            out=Path(args.out),
-            language=args.language,
-            truncate=args.truncate,
-            quantize=QUANTIZE,
-            device=DEVICE,
-        )
-        return
-
-    DEFAULT_LANGUAGE = args.language
+    try:
+        DEFAULT_LANGUAGE = resolve_language(args.language)
+    except ValueError as e:
+        parser.error(str(e))
     mcp.run()
 
 

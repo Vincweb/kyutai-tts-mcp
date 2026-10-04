@@ -3,21 +3,24 @@
 Local-only voice for Claude Code on macOS, via [Kyutai Pocket TTS](https://github.com/kyutai-labs/pocket-tts).
 No cloud, no API keys, no rate limits.
 
-- 🇫🇷 French (Estelle), 🇬🇧 English (Alba — multilingual neutral voice), plus Spanish, German, Italian, Portuguese, Dutch
-- **TTFA ~80–200 ms** thanks to native streaming via the pocket-tts Python API
-- ~4-5× real-time generation on Apple Silicon / Intel CPU — model stays warm in RAM
+- 🇫🇷 French (Estelle) and 🇬🇧 English (Alba), plus 24 other Kyutai voices usable in both
+- **No PyTorch**: runs on [ONNX Runtime](https://onnxruntime.ai/) with int8 exports of Kyutai's
+  6-layer model ([French](https://huggingface.co/Vincweb/pocket-tts-french-onnx),
+  [English](https://huggingface.co/Vincweb/pocket-tts-english-onnx))
+- **TTFA ~20 ms**, ~9× real-time on an Apple Silicon CPU, frame-by-frame streaming
 - Non-blocking `speak()`, gap-free playback via `sounddevice` write-mode
 - Bundled `/voice-mode` skill — Claude speaks summaries of its answers automatically
-- ~600 MB venv, ~1 GB model cache — lightweight relative to bigger TTS models
+- ~160 MB venv, ~115 MB model per language, ~330 MB RAM
 
 > 💡 Companion plugin: [**voxtral-mcp**](https://github.com/Vincweb/voxtral-mcp)
-> wraps Mistral Voxtral 4B (more natural voice but 5× more RAM and Apple Silicon
+> wraps Mistral Voxtral 4B (more natural voice but ~10× more RAM and Apple Silicon
 > only). See the [comparison table](#kyutai-tts-mcp-vs-voxtral-mcp) below — both
 > plugins share the same MCP API and `/voice-mode` skill.
 
 ## Requirements
 
-- macOS (Apple Silicon recommended; Intel works too — model is CPU-only)
+- macOS 13+ (Apple Silicon recommended). Intel Macs should work with Python
+  3.11–3.13, the last versions ONNX Runtime ships Intel wheels for — untested.
 - [uv](https://docs.astral.sh/uv/) — install with `curl -LsSf https://astral.sh/uv/install.sh | sh`
 - Claude Code (CLI, desktop app, or Cursor extension)
 
@@ -40,7 +43,7 @@ Add this entry to the `mcpServers` block of your project's `.mcp.json`
       "args": [
         "kyutai-tts-mcp",
         "--language",
-        "french_24l"
+        "french"
       ]
     }
   }
@@ -53,11 +56,10 @@ install script. If you'd rather have the binary persistent in `~/.local/bin`,
 `uv tool install kyutai-tts-mcp` once and use `"command": "kyutai-tts-mcp"` in
 the JSON instead.
 
-Replace `french_24l` with whatever language you mostly speak (`english`,
-`spanish_24l`, `german_24l`, `italian_24l`, `portuguese_24l`, `dutch_24l`). Per-call
+Replace `french` with `english` if that's what you mostly speak. Per-call
 `language=` always wins anyway — this is just the default. For other
-knobs (voice, quantize, device, max tokens), see the
-[Configuration](#configuration) table below.
+knobs (voice, max tokens), see the [Configuration](#configuration) table
+below.
 
 If you want the bundled `/voice-mode` skill (only relevant in Claude
 Code / Cursor), also drop it in:
@@ -82,8 +84,8 @@ wiring in one step:
 ```
 
 Restart Claude Code. On first use, `uvx` pulls `kyutai-tts-mcp` from
-[PyPI](https://pypi.org/project/kyutai-tts-mcp/) (~30 s) and the Kyutai
-model downloads from Hugging Face (~1 GB, once per language). Subsequent
+[PyPI](https://pypi.org/project/kyutai-tts-mcp/) (a few seconds) and the
+model downloads from Hugging Face (~115 MB, once per language). Subsequent
 runs are instant.
 
 > 💡 The plugin layer is a Claude Code feature; Cursor inherits it because
@@ -106,15 +108,16 @@ Claude will:
 
 Stop with **"mute"**, **"silence"**, **"stop talking"**, **"arrête de parler"**.
 
-The first call after a Claude Code restart takes ~3–5 s (model load).
-Subsequent calls have **~80–200 ms TTFA** thanks to native streaming — you
-hear the start of the audio almost immediately, even on long texts.
+The first call after a Claude Code restart loads the model in well under a
+second (once it's downloaded). Every call has **~20 ms TTFA**: audio is
+decoded and played 80 ms frame by frame while the rest is still being
+generated, so you hear the start almost immediately, even on long texts.
 
 ## MCP tools exposed
 
 | Tool | Purpose |
 |---|---|
-| `speak(text, voice?, language?, interrupt?)` | Generate audio for `text` and **queue it for background playback**. Returns immediately; streaming generation feeds the audio stream while you keep working. By default, multiple calls queue and play sequentially — including across conversational turns. Pass `interrupt=True` to abort current playback and clear the queue first (use when the user has clearly interrupted). Pass `language=` per call to switch model on the fly (`english`, `spanish_24l`, etc.) — first use of a new language pays a one-time ~3-5 s load + ~1 GB RAM, then cached. |
+| `speak(text, voice?, language?, interrupt?)` | Generate audio for `text` and **queue it for background playback**. Returns immediately; streaming generation feeds the audio stream while you keep working. By default, multiple calls queue and play sequentially — including across conversational turns. Pass `interrupt=True` to abort current playback and clear the queue first (use when the user has clearly interrupted). Pass `language=` per call to switch between `french` and `english` on the fly — first use of a language downloads its model once (~115 MB), then it stays cached. An unsupported language returns an error listing the supported ones. |
 | `stop_speaking()` | Stop playback, drop the queue, cancel in-flight generation. Use when the user explicitly asked to be quiet ("mute" / "silence"). For mid-turn interruption where you still want to speak something new, use `speak(text, interrupt=True)` instead — it does both atomically. |
 | `status()` | Report loaded languages, sample rate, cached voices, queue depths, last error. |
 
@@ -125,106 +128,29 @@ block of `.mcp.json`). Other knobs go in the `env` block:
 
 | Setting | Where | Default | Notes |
 |---|---|---|---|
-| `--language` | `args` | `french_24l` | Default language used when `speak()` is called without an explicit `language=` arg. Also: `english` (= `english_2026-09`), `english_2026-01`, `english_2026-04`, `spanish_24l`, `german_24l`, `italian_24l`, `portuguese_24l`, `dutch_24l`. Each `_24l` model also has a lighter 6-layer variant without the suffix (`french`, `spanish`, …). Can also be set via `KYUTAI_TTS_LANGUAGE` env var (the CLI flag wins). |
-| `KYUTAI_TTS_VOICE` | `env` | (language default) | Built-in voice name to use when `speak()` is called without an explicit `voice` arg |
-| `KYUTAI_TTS_DEVICE` | `env` | `cpu` | PyTorch device. Stick with `cpu` on Apple Silicon — `mps` is unsupported by the pocket-tts model. |
-| `KYUTAI_TTS_QUANTIZE` | `env` | `0` | Set to `1` for int8 quantization (smaller RAM, slightly slower). |
-| `KYUTAI_TTS_MAX_TOKENS` | `env` | `50` | Max tokens per streaming chunk. |
+| `--language` | `args` | `french` | Default language used when `speak()` is called without an explicit `language=` arg: `french` or `english`. Older names (`french_24l`, `english_2026-04`, …) are accepted as aliases, so existing configs keep working. Can also be set via `KYUTAI_TTS_LANGUAGE` env var (the CLI flag wins). |
+| `KYUTAI_TTS_VOICE` | `env` | (language default) | Voice name to use when `speak()` is called without an explicit `voice` arg |
+| `KYUTAI_TTS_MAX_TOKENS` | `env` | `50` | Max tokens per generated chunk (long texts are split on sentence boundaries). |
 
 ## Voices
 
-Pass `voice="..."` in your conversation ("parle avec la voix de Rafael"):
+Pass `voice="..."` in your conversation ("parle avec la voix de Rafael").
+The defaults are **`estelle`** for French and **`alba`** for English. Any of
+Kyutai's predefined voices works in both languages:
 
-| Voice | Pair with `language=` | Notes |
-|---|---|---|
-| `estelle` | `french_24l` | default for French |
-| `alba` | `english` | neutral, works in EN |
-| `juergen` | `german_24l` | |
-| `lola` | `spanish_24l` | |
-| `giovanni` | `italian_24l` | |
-| `rafael` | `portuguese_24l` | |
-| `daan` | `dutch_24l` | |
+`alba`, `anna`, `azelma`, `bill_boerst`, `caro_davy`, `charles`, `cosette`,
+`eponine`, `estelle`, `eve`, `fantine`, `george`, `giovanni`, `jane`,
+`javert`, `jean`, `juergen`, `lola`, `marius`, `mary`, `michael`, `paul`,
+`peter_yearsley`, `rafael`, `stuart_bell`, `vera`
 
-You can also pass any Hugging Face voice URL (`hf://kyutai/tts-voices/...`)
-to use one of Kyutai's published voices, or use a custom voice — see below.
+The two defaults ship with the model; any other voice is fetched once
+(~5 MB) from [`kyutai/pocket-tts-without-voice-cloning`](https://huggingface.co/kyutai/pocket-tts-without-voice-cloning),
+at the exact weights revision the model was exported from.
 
-## Voice cloning (custom voices)
-
-Pocket-tts can clone a voice from a short audio sample. The cloning is
-**100 % local** — your audio never leaves the machine — but the
-cloning-enabled model checkpoint is gated on Hugging Face, so there's a
-one-time setup before you can pass a custom audio path to `speak()`.
-
-### 1. One-time Hugging Face setup
-
-1. Create a (free) account at [huggingface.co](https://huggingface.co/join).
-2. Visit [huggingface.co/kyutai/pocket-tts](https://huggingface.co/kyutai/pocket-tts)
-   and click **"Agree and access repository"** to accept the terms.
-3. Generate a [read token](https://huggingface.co/settings/tokens).
-4. Install the CLI and authenticate:
-
-   ```bash
-   uv tool install huggingface-hub
-   hf auth login          # paste the token
-   ```
-
-5. Clear any previously-cached non-cloning checkpoint so the cloning-
-   enabled one downloads on next run:
-
-   ```bash
-   rm -rf ~/.cache/huggingface/hub/models--kyutai--pocket-tts
-   ```
-
-On the next `speak()` call, the cloning-capable checkpoint (~1 GB)
-downloads once. Without this setup, pocket-tts silently falls back to a
-non-cloning checkpoint and any custom-audio voice raises a
-`ValueError(VOICE_CLONING_UNSUPPORTED)`.
-
-### 2. Record a sample
-
-Recommendations for a good clone:
-
-- **10-30 seconds**, single speaker (you), clean audio (no music, no
-  background conversation)
-- **Neutral reading style** (a paragraph from a book) beats spontaneous
-  speech — avoids cloning "uh / um" fillers
-- **Match the target language** (FR sample → FR speech)
-- Any format pocket-tts can decode: `.wav`, `.mp3`, `.flac`, `.m4a`, …
-  Auto-resampled to 24 kHz.
-
-### 3. Use the sample directly (lazy)
-
-The simplest path — pass the audio file to `speak()`:
-
-```
-speak(text="…", voice="/Users/you/voices/yours.wav", language="french_24l")
-```
-
-The first call encodes the sample (~2-5 s) and caches the voice state for
-the rest of the session. Restarting the server discards the cache.
-
-### 4. Pre-extract for instant loading (`.safetensors`)
-
-If you use the same voice across sessions, pre-extract it once with the
-`extract-voice` CLI subcommand:
-
-```bash
-uvx kyutai-tts-mcp extract-voice \
-  --audio ~/voices/yours.wav \
-  --out ~/voices/yours.safetensors \
-  --language french_24l \
-  --truncate
-```
-
-Then pass the `.safetensors` file to `speak(voice=...)` — loading is
-near-instant (skips Mimi encoding + latent projection):
-
-```
-speak(text="…", voice="/Users/you/voices/yours.safetensors", language="french_24l")
-```
-
-The `.safetensors` file is small (a few KB), portable, and contains only
-the voice state — no audio.
+> **Voice cloning is gone since 0.9.0.** It needs Mimi's encoder, which the
+> ONNX exports don't include. If you rely on it, or on Spanish, German,
+> Italian, Portuguese or Dutch, stay on the last PyTorch release:
+> `uvx "kyutai-tts-mcp<0.9" --language french_24l`.
 
 ## Architecture
 
@@ -236,12 +162,12 @@ Claude Code  ──MCP stdio──▶  kyutai-tts-mcp (Python, MCPServer)
                               gen queue
                                   │
                                   ▼
-                       generation thread
-                            tts_model.generate_audio_stream(...)
-                            yields torch.Tensor chunks (~80 ms each)
+                       generation thread  (onnx_tts.py)
+                            flow LM step → flow head → Mimi decoder
+                            yields one float32 frame per step (80 ms)
                                   │
                                   ▼
-                          audio_q (numpy float32)
+                               audio_q
                                   │
                                   ▼
                        writer thread → stream.write() blocking
@@ -255,21 +181,27 @@ Claude Code  ──MCP stdio──▶  kyutai-tts-mcp (Python, MCPServer)
 
 Key design choices:
 
-- **In-process model**: pocket-tts is loaded directly via `TTSModel.load_model()`.
-  No external daemon, no HTTP, no temp WAVs, no `afplay` subprocess.
-- **Native streaming**: chunks are produced by `generate_audio_stream` as the
-  model generates — first chunk arrives in ~80–200 ms, the rest stream in
-  while playback is already happening.
+- **ONNX Runtime, no PyTorch**: each language is three int8 ONNX graphs
+  (flow LM backbone, flow head, Mimi decoder), a float16 text lookup table,
+  the tokenizer, and a `manifest.json` carrying the state layout and the
+  generation parameters. The generation loop mirrors pocket-tts's
+  `generate_audio_stream`; the text preparation and sentence chunking are
+  vendored from pocket-tts.
+- **Frame-by-frame streaming**: every generated latent is decoded right
+  away, so the first 80 ms of audio is ready ~20 ms after `speak()`.
+  Cancellation is checked before every frame.
 - **Write-mode sounddevice**: the OutputStream is opened WITHOUT a callback,
   so a Python writer thread calls `stream.write(chunk)` in blocking mode.
   PortAudio's internal buffer absorbs all timing variation, and Python never
   has to meet realtime deadlines — yielding clean, gap-free playback.
-- **Voice state cache**: `_voice_states` maps `(language, voice)` → state, so
-  the expensive `get_state_for_audio_prompt` call only runs once per (language, voice) pair.
-- **Per-language model cache**: `_models` maps language → loaded `TTSModel`.
-  The first `speak()` in a new language pays ~3-5 s and ~1 GB RAM; subsequent
-  calls in that language are instant. All pocket-tts models share the mimi
-  codec at 24 kHz, so one `OutputStream` serves every language.
+- **Voice state cache**: `_voice_states` maps `(language, voice)` → the flow
+  LM's key/value cache for that voice, loaded once per pair.
+- **Per-language model cache**: `_models` maps language → loaded bundle.
+  Both languages share the Mimi codec at 24 kHz, so one `OutputStream`
+  serves both.
+- **Pinned model revisions**: the Hugging Face repos are pinned to a commit
+  in `onnx_tts.py`, so a change to the model repos never reaches existing
+  installs without a release.
 
 ## Repo layout
 
@@ -277,7 +209,7 @@ Key design choices:
 kyutai-tts-mcp/                          repo root
 ├── mcp/                                 the MCP server (published to PyPI)
 │   ├── src/kyutai_tts_mcp/              Python source
-│   ├── pyproject.toml                   declares mcp + pocket-tts + sounddevice deps
+│   ├── pyproject.toml                   declares mcp + onnxruntime + sounddevice deps
 │   └── uv.lock
 ├── plugin/                              the Claude Code plugin
 │   ├── .claude-plugin/plugin.json       plugin manifest
@@ -315,16 +247,16 @@ wrap:
 |   | **kyutai-tts-mcp** | [**voxtral-mcp**](https://github.com/Vincweb/voxtral-mcp) |
 |---|---|---|
 | Model | Kyutai Pocket TTS | Mistral Voxtral 4B |
-| Parameters | ~100 M | 4 B (40× larger) |
+| Parameters | ~55 M est. (6 layers, int8) | 4 B |
 | Voice quality | Synthetic but intelligible | More natural prosody |
-| **TTFA** (post-load) | **~80–200 ms** ⭐ | ~2 s |
-| Generation speed | ~4–5× real-time | ~2.4× real-time |
-| Resident RAM | ~1 GB | ~3 GB |
-| Disk (model cache) | ~1 GB | ~2.5 GB |
-| Apple Silicon required | No (works on Intel too) | Yes (MLX-only) |
-| Languages | EN, FR, ES, DE, IT, PT, NL | EN, FR, ES, DE, IT, PT, NL, HI, AR |
-| Model licence | Permissive (Kyutai) | CC BY-NC 4.0 (non-commercial) |
-| Architecture | In-process via PyTorch | In-process via mlx-audio |
+| **TTFA** (post-load) | **~20 ms** ⭐ | ~2 s |
+| Generation speed | ~9× real-time | ~2.4× real-time |
+| Resident RAM | ~330 MB | ~3 GB |
+| Disk (model cache) | ~115 MB per language | ~2.5 GB |
+| Apple Silicon required | No (Intel: Python ≤ 3.13, untested) | Yes (MLX-only) |
+| Languages | EN, FR | EN, FR, ES, DE, IT, PT, NL, HI, AR |
+| Model licence | CC BY 4.0 (Kyutai) | CC BY-NC 4.0 (non-commercial) |
+| Architecture | In-process via ONNX Runtime | In-process via mlx-audio |
 
 **When to pick which:**
 
@@ -353,8 +285,9 @@ If installed standalone:
 rm -rf ~/.claude/skills/voice-mode
 # Remove the "kyutai-tts" entry from your project's .mcp.json
 uv cache clean kyutai-tts-mcp   # drop the uvx-cached venv
-# Optionally delete the cached model:
-rm -rf ~/.cache/huggingface/hub/models--kyutai--pocket-tts
+# Optionally delete the cached models and voices:
+rm -rf ~/.cache/huggingface/hub/models--Vincweb--pocket-tts-*-onnx
+rm -rf ~/.cache/huggingface/hub/models--kyutai--pocket-tts-without-voice-cloning
 ```
 
 ## Why this and not the alternatives
@@ -364,15 +297,24 @@ rm -rf ~/.cache/huggingface/hub/models--kyutai--pocket-tts
 | ElevenLabs MCP | Best quality | Cloud, API key, costs |
 | macOS `say` MCP | Free, instant | Robotic voice |
 | Hook + regex extraction of `<speak>` tags | No MCP needed | Fragile: transcript parsing, race conditions, debugging hell |
-| [voxtral-mcp](https://github.com/Vincweb/voxtral-mcp) | More natural voice, 9 languages | 3× the RAM, ~10× slower TTFA, non-commercial licence, Apple Silicon only |
-| **This (kyutai-tts-mcp)** | Local, free, fastest local TTFA, permissive licence, ~1 GB total footprint | Voice is synthetic — not ElevenLabs / Voxtral level |
+| [voxtral-mcp](https://github.com/Vincweb/voxtral-mcp) | More natural voice, 9 languages | ~10× the RAM, ~100× slower TTFA, non-commercial licence, Apple Silicon only |
+| **This (kyutai-tts-mcp)** | Local, free, fastest local TTFA, permissive licence, no PyTorch, ~300 MB total footprint | Voice is synthetic — not ElevenLabs / Voxtral level; French and English only |
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). `text_chunking.py` is vendored from
+[pocket-tts](https://github.com/kyutai-labs/pocket-tts) (MIT).
+
+The model weights are Kyutai's, released under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); the ONNX
+exports are an adaptation under the same licence. The `alba` voice was
+recorded by Alba McKenna and is released under CC BY 4.0 — credit her
+when you use it. Kyutai's terms of use apply: see the
+[Pocket TTS model card](https://huggingface.co/kyutai/pocket-tts).
 
 ## Credits
 
 - [Kyutai Labs](https://kyutai.org/) for Pocket TTS — the actual hard work
+- Alba McKenna for the `alba` voice
 - [Anthropic](https://anthropic.com/) for Claude Code & the MCP spec
 - This wrapper: just glue

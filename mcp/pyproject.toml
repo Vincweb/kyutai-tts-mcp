@@ -1,28 +1,31 @@
 [project]
 name = "kyutai-tts-mcp"
 version = "0.8.0"
-description = "MCP server wrapping Kyutai Pocket TTS for Claude Code (in-process, streaming, gap-free playback, multi-language)"
+description = "MCP server wrapping Kyutai Pocket TTS for Claude Code (ONNX Runtime, no PyTorch, streaming, gap-free playback, French + English)"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Vincent Caudron" }]
-requires-python = ">=3.10,<3.14"
-keywords = ["mcp", "tts", "kyutai", "claude", "claude-code", "voice", "speech"]
+requires-python = ">=3.11,<3.15"
+keywords = ["mcp", "tts", "kyutai", "pocket-tts", "onnx", "claude", "claude-code", "voice", "speech"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Multimedia :: Sound/Audio :: Speech",
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
   "mcp>=2.0.0",
-  "pocket-tts>=3.3",
+  "onnxruntime>=1.20",  # 1.24+ is Apple Silicon only; Intel Macs resolve to 1.23.x
+  "tokenizers>=0.21",
+  "huggingface-hub>=0.30",
+  "safetensors>=0.4",
   "numpy>=1.26",
   "sounddevice>=0.5",
 ]

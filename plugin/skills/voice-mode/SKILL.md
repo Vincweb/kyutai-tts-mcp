@@ -1,6 +1,6 @@
 ---
 name: voice-mode
-description: "Spoken responses via Kyutai pocket-tts (local, ~80–200 ms TTFA, ~1 GB RAM, synthetic voice). Activate by saying \"parle-moi\", \"voice mode\", \"active le mode vocal\", \"réponds-moi à l'oral\", or invoking /kyutai-tts:voice-mode."
+description: "Spoken responses via Kyutai pocket-tts (local, ~20 ms TTFA, ~330 MB RAM, French + English, synthetic voice). Activate by saying \"parle-moi\", \"voice mode\", \"active le mode vocal\", \"réponds-moi à l'oral\", or invoking /kyutai-tts:voice-mode."
 ---
 
 # Voice Mode — Kyutai pocket-tts
@@ -41,27 +41,22 @@ If you're unsure, **don't interrupt** — let the previous audio finish. Over-in
 - **No code, file paths, URLs, or commands** in speech. Refer to them as "the code below", "the file I'm showing you", "the command in the answer".
 - **Skip silent turns** when the entire response is a code dump, a long diff, or a table: speak a one-line preview ("voilà le diff", "ça fait trois fichiers à modifier") and let the text carry the detail.
 - **No emojis** in the spoken text (TTS reads them literally).
-- **Match the user's language**: pass `language=` on every `speak()` call so the right pocket-tts model is used. Common values:
-  - French → `language="french_24l"` (default if omitted; voice defaults to `estelle`)
-  - English → `language="english"`, `voice="alba"`
-  - Spanish → `language="spanish_24l"`, `voice="lola"`
-  - German → `language="german_24l"`, `voice="juergen"`
-  - Italian → `language="italian_24l"`, `voice="giovanni"`
-  - Portuguese → `language="portuguese_24l"`, `voice="rafael"`
-  - Dutch → `language="dutch_24l"`, `voice="daan"`
+- **Match the user's language**: pass `language=` on every `speak()` call so the right pocket-tts model is used. Only two are available:
+  - French → `language="french"` (default if omitted; voice defaults to `estelle`)
+  - English → `language="english"` (voice defaults to `alba`)
 
-  The first call to a new language pays a one-time ~3-5 s load (and ~1 GB RAM). Subsequent calls in that language are instant. Don't switch language gratuitously — stick to whatever language the user is writing in.
+  If the user writes in another language, speak a short summary in English (or French if that's closer to the conversation) rather than passing an unsupported `language=` — that call fails. The first call in a language downloads its model once (~115 MB); after that it's instant. Don't switch language gratuitously — stick to whatever language the user is writing in.
 
 ## Voice selection
 
-By default, `speak()` uses Estelle (French built-in voice). Other voices you can pass via the `voice` arg:
-- `"alba"` — neutral default voice (works in EN)
-- `"estelle"` — French female (default for French)
-- `"giovanni"` — Italian male
-- `"juergen"` — German male
-- `"lola"` — Spanish female
-- `"rafael"` — Portuguese male
-- `"daan"` — Dutch (default for Dutch)
+By default, `speak()` uses Estelle in French and Alba in English. Every voice works in both languages; pass another via the `voice` arg:
+- `"estelle"` — female (default for French)
+- `"alba"` — female, neutral (default for English)
+- `"rafael"`, `"giovanni"`, `"juergen"` — male
+- `"lola"` — female
+- Others: `"anna"`, `"azelma"`, `"bill_boerst"`, `"caro_davy"`, `"charles"`, `"cosette"`, `"eponine"`, `"eve"`, `"fantine"`, `"george"`, `"jane"`, `"javert"`, `"jean"`, `"marius"`, `"mary"`, `"michael"`, `"paul"`, `"peter_yearsley"`, `"stuart_bell"`, `"vera"`
+
+The first use of a non-default voice downloads it once (~5 MB).
 
 If the user asks for a specific voice ("parle avec la voix de Rafael"), use that voice for the rest of the conversation until they change it.
 
@@ -98,7 +93,7 @@ Text: a few lines explaining the bug, with the offending function name in backti
 ```
 speak(
   text="C'est un off-by-one dans la boucle, tu commences à un au lieu de zéro. Le fix est dans la réponse.",
-  language="french_24l",
+  language="french",
 )
 ```
 

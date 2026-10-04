@@ -250,7 +250,7 @@ wrap:
 | Model | Kyutai Pocket TTS | Mistral Voxtral 4B |
 | Parameters | ~55 M est. (6 layers, int8) | 4 B |
 | Voice quality | Synthetic but intelligible | More natural prosody |
-| **TTFA** (post-load) | **~20 ms** ⭐ | ~2 s |
+| **TTFA** (post-load) | **~20 ms** ⭐ | ~1 s |
 | Generation speed | ~9× real-time | ~2.4× real-time |
 | Resident RAM | ~330 MB | ~3 GB |
 | Disk (model cache) | ~115 MB per language | ~2.5 GB |
@@ -298,7 +298,7 @@ rm -rf ~/.cache/huggingface/hub/models--kyutai--pocket-tts-without-voice-cloning
 | ElevenLabs MCP | Best quality | Cloud, API key, costs |
 | macOS `say` MCP | Free, instant | Robotic voice |
 | Hook + regex extraction of `<speak>` tags | No MCP needed | Fragile: transcript parsing, race conditions, debugging hell |
-| [voxtral-mcp](https://github.com/Vincweb/voxtral-mcp) | More natural voice, 9 languages | ~10× the RAM, ~100× slower TTFA, non-commercial licence, Apple Silicon only |
+| [voxtral-mcp](https://github.com/Vincweb/voxtral-mcp) | More natural voice, 9 languages | ~10× the RAM, ~50× slower TTFA, non-commercial licence, Apple Silicon only |
 | **This (kyutai-tts-mcp)** | Local, free, fastest local TTFA, permissive licence, no PyTorch, ~300 MB total footprint | Voice is synthetic — not ElevenLabs / Voxtral level; French and English only |
 
 ## License

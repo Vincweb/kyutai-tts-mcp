@@ -1,6 +1,6 @@
 [project]
 name = "kyutai-tts-mcp"
-version = "0.7.0"
+version = "0.8.0"
 description = "MCP server wrapping Kyutai Pocket TTS for Claude Code (in-process, streaming, gap-free playback, multi-language)"
 readme = "README.md"
 license = { text = "MIT" }

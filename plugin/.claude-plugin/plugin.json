@@ -1,7 +1,7 @@
 {
   "name": "kyutai-tts",
   "description": "Local-only voice for Claude Code via Kyutai Pocket TTS on ONNX Runtime (no PyTorch). French + English. Bundles a speak() MCP tool and a /voice-mode skill.",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "author": {
     "name": "Vincent Caudron",
     "url": "https://github.com/Vincweb"

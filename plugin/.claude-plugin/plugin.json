@@ -1,6 +1,6 @@
 {
   "name": "kyutai-tts",
-  "description": "Local-only voice for Claude Code via Kyutai Pocket TTS. French + 5 other languages, multi-language at runtime. Bundles a speak() MCP tool and a /voice-mode skill.",
+  "description": "Local-only voice for Claude Code via Kyutai Pocket TTS. French + 6 other languages, multi-language at runtime. Bundles a speak() MCP tool and a /voice-mode skill.",
   "version": "0.7.0",
   "author": {
     "name": "Vincent Caudron",

@@ -48,6 +48,7 @@ If you're unsure, **don't interrupt** — let the previous audio finish. Over-in
   - German → `language="german_24l"`, `voice="juergen"`
   - Italian → `language="italian_24l"`, `voice="giovanni"`
   - Portuguese → `language="portuguese_24l"`, `voice="rafael"`
+  - Dutch → `language="dutch_24l"`, `voice="daan"`
 
   The first call to a new language pays a one-time ~3-5 s load (and ~1 GB RAM). Subsequent calls in that language are instant. Don't switch language gratuitously — stick to whatever language the user is writing in.
 
@@ -60,6 +61,7 @@ By default, `speak()` uses Estelle (French built-in voice). Other voices you can
 - `"juergen"` — German male
 - `"lola"` — Spanish female
 - `"rafael"` — Portuguese male
+- `"daan"` — Dutch (default for Dutch)
 
 If the user asks for a specific voice ("parle avec la voix de Rafael"), use that voice for the rest of the conversation until they change it.
 

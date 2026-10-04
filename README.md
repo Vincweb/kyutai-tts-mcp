@@ -3,7 +3,7 @@
 Local-only voice for Claude Code on macOS, via [Kyutai Pocket TTS](https://github.com/kyutai-labs/pocket-tts).
 No cloud, no API keys, no rate limits.
 
-- 🇫🇷 French (Estelle), 🇬🇧 English (Alba — multilingual neutral voice), plus Spanish, German, Italian, Portuguese
+- 🇫🇷 French (Estelle), 🇬🇧 English (Alba — multilingual neutral voice), plus Spanish, German, Italian, Portuguese, Dutch
 - **TTFA ~80–200 ms** thanks to native streaming via the pocket-tts Python API
 - ~4-5× real-time generation on Apple Silicon / Intel CPU — model stays warm in RAM
 - Non-blocking `speak()`, gap-free playback via `sounddevice` write-mode
@@ -54,7 +54,7 @@ install script. If you'd rather have the binary persistent in `~/.local/bin`,
 the JSON instead.
 
 Replace `french_24l` with whatever language you mostly speak (`english`,
-`spanish_24l`, `german_24l`, `italian_24l`, `portuguese_24l`). Per-call
+`spanish_24l`, `german_24l`, `italian_24l`, `portuguese_24l`, `dutch_24l`). Per-call
 `language=` always wins anyway — this is just the default. For other
 knobs (voice, quantize, device, max tokens), see the
 [Configuration](#configuration) table below.
@@ -125,7 +125,7 @@ block of `.mcp.json`). Other knobs go in the `env` block:
 
 | Setting | Where | Default | Notes |
 |---|---|---|---|
-| `--language` | `args` | `french_24l` | Default language used when `speak()` is called without an explicit `language=` arg. Also: `english`, `english_2026-01`, `english_2026-04`, `spanish_24l`, `german_24l`, `italian_24l`, `portuguese_24l`. Can also be set via `KYUTAI_TTS_LANGUAGE` env var (the CLI flag wins). |
+| `--language` | `args` | `french_24l` | Default language used when `speak()` is called without an explicit `language=` arg. Also: `english` (= `english_2026-09`), `english_2026-01`, `english_2026-04`, `spanish_24l`, `german_24l`, `italian_24l`, `portuguese_24l`, `dutch_24l`. Each `_24l` model also has a lighter 6-layer variant without the suffix (`french`, `spanish`, …). Can also be set via `KYUTAI_TTS_LANGUAGE` env var (the CLI flag wins). |
 | `KYUTAI_TTS_VOICE` | `env` | (language default) | Built-in voice name to use when `speak()` is called without an explicit `voice` arg |
 | `KYUTAI_TTS_DEVICE` | `env` | `cpu` | PyTorch device. Stick with `cpu` on Apple Silicon — `mps` is unsupported by the pocket-tts model. |
 | `KYUTAI_TTS_QUANTIZE` | `env` | `0` | Set to `1` for int8 quantization (smaller RAM, slightly slower). |
@@ -143,6 +143,7 @@ Pass `voice="..."` in your conversation ("parle avec la voix de Rafael"):
 | `lola` | `spanish_24l` | |
 | `giovanni` | `italian_24l` | |
 | `rafael` | `portuguese_24l` | |
+| `daan` | `dutch_24l` | |
 
 You can also pass any Hugging Face voice URL (`hf://kyutai/tts-voices/...`)
 to use one of Kyutai's published voices, or use a custom voice — see below.
@@ -320,7 +321,7 @@ wrap:
 | Resident RAM | ~1 GB | ~3 GB |
 | Disk (model cache) | ~1 GB | ~2.5 GB |
 | Apple Silicon required | No (works on Intel too) | Yes (MLX-only) |
-| Languages | EN, FR, ES, DE, IT, PT | EN, FR, ES, DE, IT, PT, NL, HI, AR |
+| Languages | EN, FR, ES, DE, IT, PT, NL | EN, FR, ES, DE, IT, PT, NL, HI, AR |
 | Model licence | Permissive (Kyutai) | CC BY-NC 4.0 (non-commercial) |
 | Architecture | In-process via PyTorch | In-process via mlx-audio |
 

@@ -4,7 +4,7 @@ Local-only voice for any MCP client (Claude Code, Claude Desktop, Cursor,
 etc.) via [Kyutai Pocket TTS](https://github.com/kyutai-labs/pocket-tts).
 No cloud, no API keys, no rate limits.
 
-- 🇫🇷 French (Estelle), 🇬🇧 English (Alba), plus Spanish, German, Italian, Portuguese
+- 🇫🇷 French (Estelle), 🇬🇧 English (Alba), plus Spanish, German, Italian, Portuguese, Dutch
 - **TTFA ~80–200 ms** thanks to native streaming via the pocket-tts Python API
 - **Multi-language at runtime** — pass `language=` per `speak()` call, models load lazily and cache
 - ~4-5× real-time generation on Apple Silicon / Intel CPU
@@ -37,7 +37,7 @@ Then add to your MCP client's `.mcp.json`:
 ```
 
 Replace `french_24l` with `english`, `spanish_24l`, `german_24l`,
-`italian_24l`, or `portuguese_24l` for your default language. Per-call
+`italian_24l`, `portuguese_24l`, or `dutch_24l` for your default language. Per-call
 `language=` overrides this default.
 
 ## MCP tools

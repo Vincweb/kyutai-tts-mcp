@@ -47,7 +47,11 @@ plays sound on the machine you're running on. Say so before you do it.
 - **`mcp>=2.0.0`** — the SDK dropped `mcp.server.fastmcp` in 2.0; the class
   is `MCPServer` from `mcp.server.mcpserver`. `@mcp.tool()` and `mcp.run()`
   are unchanged. Never reintroduce a `FastMCP` import.
-- **`requires-python = ">=3.10,<3.14"`** — pocket-tts constraint.
+- **`pocket-tts>=3.3`** — `generate_audio_stream(stop=)` arrived in 3.2,
+  Dutch in 3.3. Since 3.1, `export_model_state` is only importable from the
+  package root (`from pocket_tts import ...`), not from `models.tts_model`.
+- **`requires-python = ">=3.10,<3.14"`** — historical pocket-tts constraint.
+  pocket-tts 3.x allows `<3.15`, but 3.14 hasn't been verified here.
 - **`KYUTAI_TTS_DEVICE` stays `cpu`.** `mps` is unsupported by the
   pocket-tts model on Apple Silicon; don't "optimise" this.
 - **macOS / CoreAudio** via `sounddevice`. No Linux CI for the audio path.
@@ -65,6 +69,11 @@ gaps, deadlocks, or audio that won't stop:
   path shared by `stop_speaking()` and `speak(interrupt=True)` — set the
   event, drain both queues, `stream.abort()`. Keep it that way rather than
   adding a second abort path.
+- `_cancel_event` is also passed as `stop=` to `generate_audio_stream`, which
+  runs its own gen/decode threads. On cancel the generation loop keeps
+  *draining* the generator rather than `break`ing: it only ends once those
+  threads have exited, so the next request can't clear the event before
+  they've seen it.
 - Caches are guarded by their own locks (`_models_lock`, `_voice_states_lock`,
   `_stream_lock`). `_ensure_model` holds `_models_lock` across the heavy
   load on purpose — concurrent first-calls in the same language must not

@@ -106,7 +106,7 @@ def _resolve_voice(voice: str | None, language: str) -> str:
         return voice
     if DEFAULT_VOICE:
         return DEFAULT_VOICE
-    from pocket_tts.main import get_default_voice_for_language
+    from pocket_tts.default_parameters import get_default_voice_for_language
     return get_default_voice_for_language(language)
 
 
@@ -207,9 +207,14 @@ def _generation_loop() -> None:
                 model_state=voice_state,
                 text_to_generate=text,
                 max_tokens=MAX_TOKENS,
+                stop=_cancel_event,
             ):
                 if _cancel_event.is_set():
-                    break
+                    # Drain instead of break: pocket-tts's own gen/decode
+                    # threads exit on `stop`, and the generator only ends
+                    # once they have. Breaking early would let the next
+                    # request clear the event before they saw it.
+                    continue
                 arr = _chunk_to_float32(chunk)
                 if arr.size == 0:
                     continue
@@ -300,13 +305,13 @@ def speak(
         text: Text to read aloud. Match the language to the text — passing
               French text with `language="english"` will produce garbled output.
         voice: Built-in voice name (e.g. "estelle", "alba", "giovanni",
-               "juergen", "lola", "rafael"), or a path to a wav file for
+               "juergen", "lola", "rafael", "daan"), or a path to a wav file for
                voice cloning, or a `hf://` URL. Defaults to the language's
                built-in voice.
         language: Pocket-tts model to use for this call. Options include
                   "french_24l", "english", "english_2026-04",
                   "spanish_24l", "german_24l", "italian_24l",
-                  "portuguese_24l". Defaults to the server's default
+                  "portuguese_24l", "dutch_24l". Defaults to the server's default
                   language (set via the --language CLI flag, the
                   KYUTAI_TTS_LANGUAGE env var, or "french_24l"). The
                   model loads on first use of a given language (~3-5 s

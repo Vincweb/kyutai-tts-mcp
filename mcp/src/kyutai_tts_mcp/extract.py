@@ -40,7 +40,7 @@ def run_extract_voice(
         SystemExit: if the cloning-enabled checkpoint isn't available
                     (auth missing / terms not accepted).
     """
-    from pocket_tts.models.tts_model import TTSModel, export_model_state
+    from pocket_tts import TTSModel, export_model_state
 
     print(f"Loading model ({language})…", file=sys.stderr, flush=True)
     model = TTSModel.load_model(language=language, quantize=quantize)
